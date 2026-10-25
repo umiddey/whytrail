@@ -4,6 +4,7 @@ import { gitOut } from "./git";
 import type { RepoCtx } from "./git";
 import type { PlanFile } from "./plans";
 import { commitIndex, commitBySha, shortSha } from "./commits";
+import type { Link } from "./write-side";
 import type { Commit } from "./commits";
 
 export type WhyTarget = {
@@ -28,7 +29,7 @@ export type WhyPlanGroup = {
   date: string | null;
   title: string | null;
   goal: string | null;
-  commits: CommitRef[];
+  commits: (CommitRef & { source?: string })[];
 };
 
 export type WhyResult = {
@@ -72,12 +73,12 @@ function sortRefs(refs: CommitRef[]): CommitRef[] {
   });
 }
 
-export function whyResult(ctx: RepoCtx, plans: PlanFile[], t: WhyTarget): WhyResult {
+export function whyResult(ctx: RepoCtx, plans: PlanFile[], t: WhyTarget, extraLinks: Link[] = []): WhyResult {
   const bySha = commitBySha(commitIndex(ctx.cwd));
 
   const shas = t.from !== null ? blameShas(ctx, t) : followShas(ctx, t.file);
 
-  const groups: Record<string, CommitRef[]> = {};
+  const groups: Record<string, (CommitRef & { source?: string })[]> = {};
   const unlinked: CommitRef[] = [];
   for (const sha of shas) {
     const c: Commit | undefined = bySha[sha];
@@ -88,9 +89,14 @@ export function whyResult(ctx: RepoCtx, plans: PlanFile[], t: WhyTarget): WhyRes
         list[list.length] = ref;
         groups[pid] = list;
       }
-    } else {
-      unlinked[unlinked.length] = ref;
     }
+    for (const link of extraLinks) {
+      if (link.commit !== sha || c?.plans.includes(link.plan)) continue;
+      const list = groups[link.plan] ?? [];
+      list[list.length] = { ...ref, source: link.source };
+      groups[link.plan] = list;
+    }
+    if (!c || (c.plans.length === 0 && !extraLinks.some((l) => l.commit === sha))) unlinked[unlinked.length] = ref;
   }
 
   const byId: Record<string, PlanFile> = {};
@@ -139,7 +145,7 @@ export function whyHuman(r: WhyResult): string {
     if (p.goal) lines[lines.length] = `  Goal: ${p.goal}`;
     lines[lines.length] = `  plan: ${p.path ?? "(plan file not found)"}`;
     for (const c of p.commits) {
-      lines[lines.length] = `    ${shortSha(c.sha)} ${c.date} ${c.subject}`;
+      lines[lines.length] = `    ${shortSha(c.sha)} ${c.date} ${c.subject}${c.source ? ` [${c.source}]` : ""}`;
     }
   }
   if (r.unlinked.length > 0) {
