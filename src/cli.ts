@@ -43,9 +43,12 @@ function run(argv: string[]): number {
     }
     if (cmd === "review") {
       const acceptAt = argv.indexOf("--accept"), rejectAt = argv.indexOf("--reject");
+      const selected = (acceptAt >= 0 ? 1 : 0) + (rejectAt >= 0 ? 1 : 0);
+      if (selected > 1) throw new Error("use only one of --accept or --reject");
       const at = acceptAt >= 0 ? acceptAt : rejectAt;
+      if (at >= 0 && (!argv[at + 1] || !argv[at + 2])) throw new Error("review decision needs <sha> <plan-id>");
       const result = at >= 0
-        ? review(ctx, plans, { accept: acceptAt >= 0, sha: argv[at + 1] ?? "", plan: argv[at + 2] ?? "" })
+        ? review(ctx, plans, { accept: acceptAt >= 0, sha: argv[at + 1], plan: argv[at + 2] })
         : review(ctx, plans);
       process.stdout.write(result);
       return 0;
