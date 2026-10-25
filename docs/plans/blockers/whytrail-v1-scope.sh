@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# plantrail-v1-scope.sh: phase-0 blocker for plan 20261025_1440_plantrail_v1.
-# In /home/ukd/projects/plantrail-v1: the plan files stay Main's, source never rewrites git history or
+# whytrail-v1-scope.sh: phase-0 blocker for plan 20261025_1440_whytrail_v1.
+# In /home/ukd/projects/whytrail-v1: the plan files stay Main's, source never rewrites git history or
 # pushes, and tests never touch a real repo (only temp repos they create).
 set -uo pipefail
 # Called by plan-guard with one tool call on stdin: the tree scan only judges commits/pushes, so a red
@@ -9,8 +9,8 @@ if [ ! -t 0 ]; then
   CALL=$(timeout 2 cat 2>/dev/null || true)
   if [ -n "$CALL" ] && ! printf '%s' "$CALL" | grep -qE 'git[^|;&]*\b(commit|push)\b'; then exit 0; fi
 fi
-WT=/home/ukd/projects/plantrail-v1
-[ -d "$WT" ] || { echo "plantrail-v1-scope: no worktree"; exit 0; }
+WT=/home/ukd/projects/whytrail-v1
+[ -d "$WT" ] || { echo "whytrail-v1-scope: no worktree"; exit 0; }
 cd "$WT" || exit 1
 BASE=$(git merge-base main HEAD 2>/dev/null || echo main)
 FILES=$( { git diff --name-only "$BASE"; git ls-files --others --exclude-standard; } 2>/dev/null | sort -u)
@@ -26,5 +26,5 @@ fi
 if [ -d tests ]; then
   if grep -rnE "/home/ukd/(Work|projects)/" tests; then echo "FORBIDDEN in tests: a real repo path (use temp repos)"; rc=1; fi
 fi
-[ $rc -eq 0 ] && echo "plantrail-v1-scope: clean"
+[ $rc -eq 0 ] && echo "whytrail-v1-scope: clean"
 exit $rc
