@@ -19,7 +19,8 @@ for f in $FILES; do
   case "$f" in docs/plans/*) echo "OUT OF SCOPE (Main's plan files): $f"; rc=1 ;; esac
 done
 if [ -d src ]; then
-  if grep -rnE "filter-branch|commit[\"', ]+--amend|\brebase\b|\bpush\b|notes[\"', ]+(add|append|edit|remove)|update-ref" src; then
+  # `(^|[^.])push`: a git push is forbidden, a JS array `.push(` is not.
+  if grep -rnE "filter-branch|commit[\"', ]+--amend|\brebase\b|(^|[^.])\bpush\b|notes[\"', ]+(add|append|edit|remove)|update-ref" src; then
     echo "FORBIDDEN in src: history rewrite, push or ref writes"; rc=1
   fi
 fi
