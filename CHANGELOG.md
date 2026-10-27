@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Every `.whytrail/links.jsonl` line carries `files`: the code files that commit changed (`.md` excluded, sorted). A re-run fills only that field on old lines; review decisions stay. (P3e)
+
 ### Fixed
 
 - `cited-path` counts only when the commit date is inside the measured window from `.whytrail/windows.json` (fallback when not measured: 3 days before the plan date, 1 day after the last Progress date, or the plan date when Progress has none). (P3c)

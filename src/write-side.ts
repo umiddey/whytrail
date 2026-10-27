@@ -7,7 +7,7 @@ import type { PlanFile } from "./plans";
 
 export type LinkSource = "trailer" | "co-commit" | "memory-log" | "progress-sha" | "branch" | "date-files" | "cited-path" | "semantic" | "review";
 export type LinkDecision = "accept" | "reject";
-export type Link = { commit: string; plan: string; source: LinkSource; confidence: "high" | "medium" | "low" | "review"; decision?: LinkDecision };
+export type Link = { commit: string; plan: string; source: LinkSource; confidence: "high" | "medium" | "low" | "review"; decision?: LinkDecision; files?: string[] };
 function linkFile(root: string): string { return join(root, ".whytrail", "links.jsonl"); }
 function mainRoot(cwd: string): string { const common=gitOut(["rev-parse","--path-format=absolute","--git-common-dir"],cwd).trim();return common.replace(/\/\.git$/,"").replace(/\/$/,""); }
 function readLinks(root: string): Link[] { const path=linkFile(root);if(!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(x=>JSON.parse(x) as Link); }
@@ -50,6 +50,9 @@ export function uninstall(ctx: RepoCtx): void {const dir=hooksDir(ctx.cwd);for(c
 export function branchPlans(plans: PlanFile[]): string {const out:string[]=[];for(const p of plans){let text="";try{text=readFileSync(p.absPath,"utf8");}catch{continue;}const branch=text.match(/^Branch:\s*(.+?)\s*$/m)?.[1];if(branch)out[out.length]=`${p.id}\t${branch}`;}return out.join("\n");}
 function planDate(plan:PlanFile):number|null{if(!plan.date)return null;const value=Date.parse(plan.date.replace(" ","T")+":00Z");return Number.isFinite(value)?value:null;}
 function commitPaths(cwd:string,sha:string):string[]{return gitOut(["diff-tree","--root","--no-commit-id","--name-only","-r",sha],cwd).split(/\r?\n/).filter(Boolean);}
+function codeFiles(cwd: string, sha: string): string[] {
+  return gitOut(["show", "--name-only", "--format=", sha], cwd).split(/\r?\n/).filter((path) => path && !path.endsWith(".md")).sort();
+}
 function commitInfo(cwd:string,sha:string):{date:string;subject:string;trailers:string[]}{const fields=gitOut(["show","-s","--format=%aI%x1f%s%x1f%(trailers:key=Plan,valueonly)",sha],cwd).trimEnd().split("\x1f");return {date:fields[0]??"",subject:fields[1]??"",trailers:(fields[2]??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)};}
 function citedPaths(text:string):string[]{const found:string[]=[];let active=false;for(const line of text.split(/\r?\n/)){if(/^#{1,6}\s*(FILES MODIFIED|Files changed|Files)\s*$/i.test(line.trim())){active=true;continue;}if(active&&/^#{1,6}\s/.test(line))break;if(active){for(const m of line.matchAll(/(?:^|[\s`])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?/g))found[found.length]=m[1];}}return [...new Set(found)];}
 export function planCodePaths(text:string):string[]{const found:string[]=[];for(const line of text.split(/\r?\n/)){for(const m of line.matchAll(/(?:^|[\s`])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?/g)){const p=m[1];if(!p.endsWith(".md"))found[found.length]=p;}}return [...new Set(found)];}
@@ -77,13 +80,14 @@ export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolea
  const storedWindows=readStoredWindows(root);
  const since=opts.since?Date.parse(opts.since):Number.NEGATIVE_INFINITY;
  const citedCandidates:{sha:string;plan:PlanFile;timestamp:number;text:string}[]=[];
+ const codeCache: Record<string, string[]> = {};
  for(const sha of shas){const meta=commitInfo(ctx.cwd,sha);if(Date.parse(meta.date)<since)continue;const files=commitPaths(ctx.cwd,sha),timestamp=Date.parse(meta.date),hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
   if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited)citedCandidates[citedCandidates.length]={sha,plan,timestamp,text};}
-  if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence};
+  if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence,files:codeCache[sha]??(codeCache[sha]=codeFiles(ctx.cwd,sha))};
  }}
  const measured=windowsFor(ctx,plans,[...old,...added]);
  const citedDays={beforeDays:measured.plan_before_code_days??storedWindows?.plan_before_code_days??FALLBACK_BEFORE_DAYS,afterDays:measured.plan_after_code_days??storedWindows?.plan_after_code_days??FALLBACK_AFTER_DAYS};
- for(const row of citedCandidates){if(citedPathInWindow(row.timestamp,row.plan,row.text,citedDays))added[added.length]={commit:row.sha,plan:row.plan.id,source:"cited-path",confidence:"medium"};}
+ for(const row of citedCandidates){if(citedPathInWindow(row.timestamp,row.plan,row.text,citedDays))added[added.length]={commit:row.sha,plan:row.plan.id,source:"cited-path",confidence:"medium",files:codeCache[row.sha]??(codeCache[row.sha]=codeFiles(ctx.cwd,row.sha))};}
  return {added,old};
 }
 export function backfill(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolean;since?:string}):string{
@@ -92,7 +96,11 @@ export function backfill(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolean;since
  const totals:Record<string,number>={};for(const l of [...old,...added]){const key=`${l.source} ${l.confidence}`;totals[key]=(totals[key]??0)+1;}
  const summary=[`new links: ${added.length}`,...Object.keys(totals).sort().map(k=>`${k}: ${totals[k]}`),formatWindows(windows)];
  if(!opts.dryRun){
-  if(added.length){const path=linkFile(root);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,[...old,...added].map(l=>JSON.stringify(l)).join("\n")+"\n");}
+  const path=linkFile(root);
+  const cache:Record<string,string[]>={};
+  let changed=false;
+  const kept=old.map((row)=>{if(Array.isArray(row.files))return row;changed=true;const files=cache[row.commit]??(cache[row.commit]=codeFiles(ctx.cwd,row.commit));return {...row,files};});
+  if(added.length||changed){mkdirSync(dirname(path),{recursive:true});writeFileSync(path,[...kept,...added].map(l=>JSON.stringify(l)).join("\n")+"\n");}
   writeWindows(root,windows);
  }
  return summary.join("\n")+"\n";
@@ -101,7 +109,7 @@ export function review(ctx:RepoCtx,_plans:PlanFile[],decision?:{accept:boolean;s
  const root=mainRoot(ctx.cwd),old=readLinks(root);
  if(decision){
   const path=linkFile(root),keep=old.filter(l=>!(l.commit===decision.sha&&l.plan===decision.plan));
-  keep[keep.length]={commit:decision.sha,plan:decision.plan,source:"review",confidence:"review",decision:decision.accept?"accept":"reject"};
+  keep[keep.length]={commit:decision.sha,plan:decision.plan,source:"review",confidence:"review",decision:decision.accept?"accept":"reject",files:codeFiles(ctx.cwd,decision.sha)};
   mkdirSync(dirname(path),{recursive:true});writeFileSync(path,keep.map(l=>JSON.stringify(l)).join("\n")+"\n");
   return `${decision.accept?"accepted":"rejected"} ${decision.sha} ${decision.plan}\n`;
  }
@@ -319,7 +327,7 @@ export async function applySemantic(ctx: RepoCtx, plans: PlanFile[], opts: { dry
     const path = linkFile(root);
     const stored = readLinks(root);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, [...stored, ...semantic].map((link) => JSON.stringify(link)).join("\n") + "\n");
+    writeFileSync(path, [...stored, ...semantic.map((link) => ({ ...link, files: codeFiles(ctx.cwd, link.commit) }))].map((link) => JSON.stringify(link)).join("\n") + "\n");
   }
   return semantic.length ? `semantic links: ${semantic.length}\n` : "";
 }

@@ -54,7 +54,7 @@ Installs `prepare-commit-msg` and `commit-msg` hooks into the repo's common git 
 
 ### `whytrail backfill [--dry-run] [--since <date>]`
 
-Computes links for existing commits and writes `.whytrail/links.jsonl` into the repo's main checkout root. Idempotent — a re-run adds nothing — and never overwrites a `review` decision. `--dry-run` only prints what would be added (plus per-source/confidence totals); `--since <date>` limits the commits considered by author date.
+Computes links for existing commits and writes `.whytrail/links.jsonl` into the repo's main checkout root. Idempotent — a re-run adds nothing — and never overwrites a `review` decision. A re-run fills `files` on lines that lack it and leaves every other field as it was; a second re-run changes nothing. `--dry-run` only prints what would be added (plus per-source/confidence totals); `--since <date>` limits the commits considered by author date.
 
 ### `whytrail review [--accept|--reject <sha> <plan-id>]`
 
@@ -89,10 +89,10 @@ Plan: 20260827_1344_jurisdiction_content_location_validator
 One JSON object per line:
 
 ```json
-{"commit":"1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b","plan":"20260827_1344_jurisdiction_content_location_validator","source":"trailer","confidence":"high"}
+{"commit":"1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b","plan":"20260827_1344_jurisdiction_content_location_validator","source":"trailer","confidence":"high","files":["src/a.ts"]}
 ```
 
-Fields: `commit` (full SHA), `plan` (plan id), `source`, `confidence`, and — only on recorded review decisions — `decision` (`"accept"` or `"reject"`).
+Fields: `commit` (full SHA), `plan` (plan id), `source`, `confidence`, `files` (code files that commit changed, `.md` excluded, sorted), and — only on recorded review decisions — `decision` (`"accept"` or `"reject"`).
 
 Sources, in the order backfill tries them (first match wins):
 
