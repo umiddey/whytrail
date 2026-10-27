@@ -80,13 +80,16 @@ export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolea
  const storedWindows=readStoredWindows(root);
  const since=opts.since?Date.parse(opts.since):Number.NEGATIVE_INFINITY;
  const citedCandidates:{sha:string;plan:PlanFile;timestamp:number;text:string}[]=[];
+ const memoryCandidates:{sha:string;plan:PlanFile;timestamp:number;text:string;files:string[];hasCode:boolean}[]=[];
+ const memoryFileMs:Record<string,number>={};
  const codeCache: Record<string, string[]> = {};
- for(const sha of shas){const meta=commitInfo(ctx.cwd,sha);if(Date.parse(meta.date)<since)continue;const files=commitPaths(ctx.cwd,sha),timestamp=Date.parse(meta.date),hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
-  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited)citedCandidates[citedCandidates.length]={sha,plan,timestamp,text};}
+ for(const sha of shas){const meta=commitInfo(ctx.cwd,sha),timestamp=Date.parse(meta.date),files=commitPaths(ctx.cwd,sha);for(const plan of plans){if(files.includes(`docs/memory/${plan.id}.md`)){const prev=memoryFileMs[plan.id];if(prev===undefined||timestamp<prev)memoryFileMs[plan.id]=timestamp;}}if(timestamp<since)continue;const hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
+  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){memoryCandidates[memoryCandidates.length]={sha,plan,timestamp,text,files,hasCode};}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited)citedCandidates[citedCandidates.length]={sha,plan,timestamp,text};}
   if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence,files:codeCache[sha]??(codeCache[sha]=codeFiles(ctx.cwd,sha))};
  }}
  const measured=windowsFor(ctx,plans,[...old,...added]);
  const citedDays={beforeDays:measured.plan_before_code_days??storedWindows?.plan_before_code_days??FALLBACK_BEFORE_DAYS,afterDays:measured.plan_after_code_days??storedWindows?.plan_after_code_days??FALLBACK_AFTER_DAYS};
+ for(const row of memoryCandidates){if(citedPathInWindow(row.timestamp,row.plan,row.text,citedDays,memoryFileMs[row.plan.id]))added[added.length]={commit:row.sha,plan:row.plan.id,source:"memory-log",confidence:"medium",files:codeCache[row.sha]??(codeCache[row.sha]=codeFiles(ctx.cwd,row.sha))};else{let weaker:LinkSource|undefined;let weakerConfidence:Link["confidence"]|undefined;if(new RegExp(`\\b${row.sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(row.text)){weaker="progress-sha";weakerConfidence="high";}else if(branchLinks[row.plan.id]?.has(row.sha)){weaker="branch";weakerConfidence="high";}else{const date=row.plan.date?.slice(0,10);const cited=row.files.some(f=>!f.endsWith(".md")&&planCodePaths(row.text).includes(f));if(date&&new Date(row.timestamp).toISOString().slice(0,10)===date&&row.hasCode&&cited){weaker="date-files";weakerConfidence="low";}else if(cited)citedCandidates[citedCandidates.length]={sha:row.sha,plan:row.plan,timestamp:row.timestamp,text:row.text};}if(weaker&&weakerConfidence)added[added.length]={commit:row.sha,plan:row.plan.id,source:weaker,confidence:weakerConfidence,files:codeCache[row.sha]??(codeCache[row.sha]=codeFiles(ctx.cwd,row.sha))};}}
  for(const row of citedCandidates){if(citedPathInWindow(row.timestamp,row.plan,row.text,citedDays))added[added.length]={commit:row.sha,plan:row.plan.id,source:"cited-path",confidence:"medium",files:codeCache[row.sha]??(codeCache[row.sha]=codeFiles(ctx.cwd,row.sha))};}
  return {added,old};
 }
@@ -165,10 +168,11 @@ function lastProgressMs(text: string): number | null {
   return best;
 }
 
-function citedPathInWindow(commitMs: number, plan: PlanFile, text: string, days: { beforeDays: number; afterDays: number }): boolean {
+function citedPathInWindow(commitMs: number, plan: PlanFile, text: string, days: { beforeDays: number; afterDays: number }, endAt?: number): boolean {
   const start = planDate(plan);
   if (start === null || !Number.isFinite(commitMs)) return false;
-  const end = lastProgressMs(text) ?? start;
+  let end = lastProgressMs(text) ?? start;
+  if (endAt !== undefined && endAt > end) end = endAt;
   return commitMs >= start - days.afterDays * DAY_MS && commitMs <= end + days.beforeDays * DAY_MS;
 }
 
