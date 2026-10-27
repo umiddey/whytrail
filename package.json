@@ -2,6 +2,10 @@
   "name": "whytrail",
   "version": "0.1.0",
   "description": "Link plan files and code both ways, in time order.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/umiddey/whytrail.git"
+  },
   "bin": {
     "whytrail": "src/cli.ts"
   },
