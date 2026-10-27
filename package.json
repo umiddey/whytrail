@@ -1,6 +1,6 @@
 {
   "name": "whytrail",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Link plan files and code both ways, in time order.",
   "repository": {
     "type": "git",

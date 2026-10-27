@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 (2026-10-27)
+
 ### Added
 
 - Every `.whytrail/links.jsonl` line carries `files`: the code files that commit changed (`.md` excluded, sorted). A re-run fills only that field on old lines; review decisions stay. (P3e)
