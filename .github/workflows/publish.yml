@@ -2,12 +2,12 @@
 # is not on npm yet: bump the version, `git push`, done. Pushes that keep the
 # version publish nothing. After publishing it tags the commit v<version>.
 #
-# Auth: npm trusted publishing (OIDC) when it is set up for this repo, else the
-# NPM_TOKEN repository secret. npm only allows a trusted publisher once the
-# package exists, so the first release needs NPM_TOKEN (npmjs.com → Access
-# Tokens → granular, read+write on whytrail); after that the secret may be
-# replaced by package whytrail → Settings → Trusted Publisher → umiddey/whytrail,
-# workflow publish.yml.
+# Auth: npm trusted publishing (OIDC) only; no token exists or is used.
+# npm lets a trusted publisher be set only on a package that already exists
+# (docs.npmjs.com/cli/v12/commands/npm-trust: "Package must exist"), so the
+# owner publishes once by hand (`npm login`, `npm publish --access public`),
+# then sets package whytrail → Settings → Trusted Publisher → umiddey/whytrail,
+# workflow publish.yml. Every later version bump + push publishes from here.
 name: publish
 on:
   push:
@@ -52,8 +52,6 @@ jobs:
       # whytrail's repo is public, so npm accepts the provenance bundle.
       - if: steps.ver.outputs.new == 'true'
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - if: steps.ver.outputs.new == 'true'
         run: |
           git tag "v${{ steps.ver.outputs.version }}"
