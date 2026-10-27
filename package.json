@@ -1,0 +1,15 @@
+{
+  "name": "whytrail",
+  "version": "0.1.0",
+  "description": "Link plan files and code both ways, in time order.",
+  "bin": {
+    "whytrail": "src/cli.ts"
+  },
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test"
+  }
+}
