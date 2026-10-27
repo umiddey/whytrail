@@ -104,13 +104,13 @@ Sources, in the order backfill tries them (first match wins):
 | `progress-sha` | high | the plan text cites the commit's SHA (abbreviated or full) |
 | `branch` | high | the plan's `Branch:` line matches a `Merge branch '<branch>'` commit; the branch's commits and the merge link to the plan |
 | `date-files` | low | only a date match (commit day = plan day) plus a non-`.md` code path cited anywhere in the plan text |
-| `cited-path` | medium | the plan names a non-`.md` file the commit changes, and no cheaper source matched |
+| `cited-path` | medium | the plan names a non-`.md` file the commit changes, the commit date is inside [plan date − plan-after-code window, last Progress date (or plan date) + plan-before-code window], and no cheaper source matched |
 | `semantic` | medium at similarity ≥ 0.8, otherwise low | embedding similarity of plan text vs commit message + diff summary, only for commits with no cheaper link, and only inside the measured date window |
 | `review` | review | your explicit `--accept`/`--reject` decision; overrides backfill and is never overwritten by it |
 
 A commit touching more than 100 files (a bulk snapshot) still gets `co-commit` links, but at low confidence.
 
-`whytrail backfill` measures date windows from the high-confidence links: the 95th percentile (nearest rank, `ceil(0.95 * n)`) of code-date minus plan-date when the plan is first, and of plan-date minus code-date when the plan is later. It writes `.whytrail/windows.json` and prints the percentiles. Semantic linking does not guess a window when there are no high-confidence samples.
+`whytrail backfill` measures date windows from the high-confidence links: the 95th percentile (nearest rank, `ceil(0.95 * n)`) of code-date minus plan-date when the plan is first, and of plan-date minus code-date when the plan is later. It writes `.whytrail/windows.json` and prints the percentiles. Semantic linking does not guess a window when there are no high-confidence samples. `cited-path` reads the stored windows; a side that is missing or not yet measured falls back to 3 days before the plan date and 1 day after the last Progress date.
 
 ## OpenRouter
 

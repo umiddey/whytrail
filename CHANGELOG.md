@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `cited-path` counts only when the commit date is inside the measured window from `.whytrail/windows.json` (fallback when not measured: 3 days before the plan date, 1 day after the last Progress date, or the plan date when Progress has none). (P3c)
+
 ## 0.2.0 (2026-10-27)
 
 ### Added

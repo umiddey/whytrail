@@ -87,10 +87,58 @@ describe("lineage links", () => {
     repo.write(planPath, text);
     repo.commit([planPath], "plan", { date: "2026-01-01T09:00:00Z" });
     repo.write("src/later.ts", "x\n");
-    repo.commit(["src/later.ts"], "later", { date: "2026-02-01T09:00:00Z" });
+    repo.commit(["src/later.ts"], "later", { date: "2026-01-02T09:00:00Z" });
     const ctx = repoContext(repo.root);
     backfill(ctx, [planFromFile(repo.root, planPath, text)], { dryRun: false });
     expect(links(ctx).find((link) => link.source === "cited-path")).toMatchObject({ confidence: "medium", plan: "20260101_0900_cite" });
+  });
+
+  test("cited-path links a file the plan names only inside the fallback window", () => {
+    const repo = makeTempRepo();
+    repos.push(repo);
+    const planPath = "docs/plans/20260101_0900_citewin.md";
+    const text = "# Cite window\n\n## Goal\nTouch src/a.ts\n";
+    repo.write(planPath, text);
+    repo.commit([planPath], "plan", { date: "2026-01-01T09:00:00Z" });
+    repo.write("src/a.ts", "near\n");
+    const near = repo.commit(["src/a.ts"], "one day", { date: "2026-01-02T09:00:00Z" });
+    repo.write("src/a.ts", "far\n");
+    const far = repo.commit(["src/a.ts"], "sixty days", { date: "2026-03-02T09:00:00Z" });
+    const ctx = repoContext(repo.root);
+    backfill(ctx, [planFromFile(repo.root, planPath, text)], { dryRun: false });
+    const cited = links(ctx).filter((link) => link.source === "cited-path");
+    expect(cited).toHaveLength(1);
+    expect(cited[0]).toMatchObject({ commit: near, confidence: "medium", plan: "20260101_0900_citewin" });
+    expect(links(ctx).some((link) => link.commit === far)).toBe(false);
+  });
+
+  test("cited-path uses windows.json and the last Progress date", () => {
+    const repo = makeTempRepo();
+    repos.push(repo);
+    const planPath = "docs/plans/20260101_0900_citeprog.md";
+    const text = "# Cite progress\n\n## Goal\nTouch src/a.ts\n\n## Progress\n- 2026-01-10 09:00 Main: still open\n";
+    repo.write(planPath, text);
+    repo.commit([planPath], "plan", { date: "2026-01-01T09:00:00Z" });
+    repo.write(".whytrail/windows.json", JSON.stringify({
+      plan_before_code_days: 2,
+      plan_after_code_days: 0.5,
+      before_n: 4,
+      after_n: 4,
+    }) + "\n");
+    repo.write("src/a.ts", "early\n");
+    const early = repo.commit(["src/a.ts"], "early", { date: "2025-12-30T09:00:00Z" });
+    repo.write("src/a.ts", "edge\n");
+    const edge = repo.commit(["src/a.ts"], "edge", { date: "2025-12-31T21:00:00Z" });
+    repo.write("src/a.ts", "end\n");
+    const end = repo.commit(["src/a.ts"], "end", { date: "2026-01-12T09:00:00Z" });
+    repo.write("src/a.ts", "past\n");
+    const past = repo.commit(["src/a.ts"], "past", { date: "2026-01-12T09:00:01Z" });
+    const ctx = repoContext(repo.root);
+    backfill(ctx, [planFromFile(repo.root, planPath, text)], { dryRun: false });
+    const cited = links(ctx).filter((link) => link.source === "cited-path").map((link) => link.commit);
+    expect(cited).toEqual([edge, end]);
+    expect(cited).not.toContain(early);
+    expect(cited).not.toContain(past);
   });
 
   test("semantic links a leftover inside the measured window and skips one outside it", async () => {

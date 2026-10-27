@@ -74,9 +74,11 @@ export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolea
    for(const commit of commits)branchLinks[planId].add(commit);
   }
  }
+ const storedWindows=readStoredWindows(root);
+ const citedDays={beforeDays:storedWindows?.plan_before_code_days??FALLBACK_BEFORE_DAYS,afterDays:storedWindows?.plan_after_code_days??FALLBACK_AFTER_DAYS};
  const since=opts.since?Date.parse(opts.since):Number.NEGATIVE_INFINITY;
  for(const sha of shas){const meta=commitInfo(ctx.cwd,sha);if(Date.parse(meta.date)<since)continue;const files=commitPaths(ctx.cwd,sha),timestamp=Date.parse(meta.date),hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
-  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited){source="cited-path";confidence="medium";}}
+  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited&&citedPathInWindow(timestamp,plan,text,citedDays)){source="cited-path";confidence="medium";}}
   if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence};
  }}
  return {added,old};
@@ -113,6 +115,51 @@ export type Windows = {
   before_n: number;
   after_n: number;
 };
+
+const FALLBACK_BEFORE_DAYS = 1;
+const FALLBACK_AFTER_DAYS = 3;
+
+function readStoredWindows(root: string): Windows | null {
+  const path = join(root, ".whytrail", "windows.json");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<Windows>;
+    const before = parsed.plan_before_code_days;
+    const after = parsed.plan_after_code_days;
+    return {
+      plan_before_code_days: typeof before === "number" && Number.isFinite(before) ? before : null,
+      plan_after_code_days: typeof after === "number" && Number.isFinite(after) ? after : null,
+      before_n: typeof parsed.before_n === "number" ? parsed.before_n : 0,
+      after_n: typeof parsed.after_n === "number" ? parsed.after_n : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function lastProgressMs(text: string): number | null {
+  let inProgress = false;
+  let best: number | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^##\s+Progress\b/.test(line)) { inProgress = true; continue; }
+    if (inProgress && /^##\s+/.test(line)) break;
+    if (!inProgress) continue;
+    const m = line.match(/^-\s+(\d{4}-\d{2}-\d{2})(?:\s+~?(\d{2}):(\d{2}))?/);
+    if (!m) continue;
+    const stamp = m[2] && m[3] ? `${m[1]}T${m[2]}:${m[3]}:00Z` : `${m[1]}T23:59:59.999Z`;
+    const ms = Date.parse(stamp);
+    if (!Number.isFinite(ms)) continue;
+    if (best === null || ms > best) best = ms;
+  }
+  return best;
+}
+
+function citedPathInWindow(commitMs: number, plan: PlanFile, text: string, days: { beforeDays: number; afterDays: number }): boolean {
+  const start = planDate(plan);
+  if (start === null || !Number.isFinite(commitMs)) return false;
+  const end = lastProgressMs(text) ?? start;
+  return commitMs >= start - days.afterDays * DAY_MS && commitMs <= end + days.beforeDays * DAY_MS;
+}
 
 export function percentile95(values: number[]): number | null {
   if (values.length === 0) return null;
