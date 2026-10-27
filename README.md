@@ -7,7 +7,7 @@ Every feature starts life as a plan file (`docs/plans/<YYYYMMDD_HHMM>_<name>.md`
 - `whytrail why <file>` — which plans are behind these lines, oldest first.
 - `whytrail code <plan>` — which commits and files this plan changed.
 
-It also backfills links for old commits that predate the trailer convention into a committed `.whytrail/links.jsonl`, each link with a source and a confidence, and lists the unsure ones for you to accept or reject. It reads git (`log`, `blame`, `show`, `rev-list`); it never rewrites history, amends, pushes, or calls any AI — matching is deterministic.
+It also backfills links for old commits that predate the trailer convention into a committed `.whytrail/links.jsonl`, each link with a source and a confidence, and lists the unsure ones for you to accept or reject. It reads git (`log`, `blame`, `show`, `rev-list`); it never rewrites history, amends, or pushes. Matching is deterministic unless an OpenRouter key is set. With a key, leftover commits inside a measured date window can be linked by embedding, and plans without story lines can be labeled by a classify model. With no key, those stay unclassified and whytrail says so in one line.
 
 ## Install
 
@@ -29,7 +29,12 @@ whytrail why <file>[:<from>[-<to>]] [--json]
 whytrail code <plan-id|path> [--json]
 whytrail install | uninstall
 whytrail backfill [--dry-run] [--since <date>] [--repo <path>]
-whytrail review [--accept|--reject <sha> <plan-id>]
+whytrail labels [--json]
+whytrail review [--sample <n>] [--accept|--reject <sha> <plan-id>]
+whytrail config set <name> [value]
+whytrail config get <name>
+whytrail config list
+whytrail config unset <name>
 whytrail --help
 ```
 
@@ -54,6 +59,14 @@ Computes links for existing commits and writes `.whytrail/links.jsonl` into the 
 ### `whytrail review [--accept|--reject <sha> <plan-id>]`
 
 Bare `whytrail review` lists the unsure links: low-confidence ones, and any commit linked to more than one plan. Decide with `--accept <sha> <plan-id>` or `--reject <sha> <plan-id>`; the decision is stored in `links.jsonl` and respected by `why`, `code`, and later backfills.
+
+### `whytrail labels [--json]`
+
+One label per plan, oldest first: `bad (bug|perf|taste) by <later plan>: "<its first Goal line>"` when a later bug, perf, or taste plan builds on it; `good` when the plan is at least 14 days old and no such plan builds on it; otherwise `open`. A later feature or change plan changes nothing. Labels come from `.whytrail/cards.jsonl`, not from re-reading plan bodies.
+
+### `whytrail config`
+
+`set`, `get`, `list`, and `unset` for `openrouter-key`, `classify-model`, and `embed-model`. The file is `~/.config/whytrail/config.json`, mode 0600. `set openrouter-key` with no value asks with hidden input, so the key stays out of shell history. `get` and `list` show the key masked (`sk-or-…ab12`), never whole. `OPENROUTER_API_KEY` wins over the file. Unknown names exit 1.
 
 ## Plan discovery
 
@@ -86,12 +99,28 @@ Sources, in the order backfill tries them (first match wins):
 | source | confidence | matched when |
 | --- | --- | --- |
 | `trailer` | high | the commit carries a `Plan: <id>` trailer naming the plan |
-| `co-commit` | high | the commit changes the plan file and other files together |
+| `co-commit` | high, or low if the commit touches more than 100 files | the commit changes the plan file and other files together |
 | `memory-log` | medium | `docs/memory/<plan-id>.md` lists files under a `FILES MODIFIED` / `Files changed` / `Files` heading, and a commit dated on/after the plan changes one of them |
 | `progress-sha` | high | the plan text cites the commit's SHA (abbreviated or full) |
 | `branch` | high | the plan's `Branch:` line matches a `Merge branch '<branch>'` commit; the branch's commits and the merge link to the plan |
 | `date-files` | low | only a date match (commit day = plan day) plus a non-`.md` code path cited anywhere in the plan text |
+| `cited-path` | medium | the plan names a non-`.md` file the commit changes, and no cheaper source matched |
+| `semantic` | medium at similarity ≥ 0.8, otherwise low | embedding similarity of plan text vs commit message + diff summary, only for commits with no cheaper link, and only inside the measured date window |
 | `review` | review | your explicit `--accept`/`--reject` decision; overrides backfill and is never overwritten by it |
+
+A commit touching more than 100 files (a bulk snapshot) still gets `co-commit` links, but at low confidence.
+
+`whytrail backfill` measures date windows from the high-confidence links: the 95th percentile (nearest rank, `ceil(0.95 * n)`) of code-date minus plan-date when the plan is first, and of plan-date minus code-date when the plan is later. It writes `.whytrail/windows.json` and prints the percentiles. Semantic linking does not guess a window when there are no high-confidence samples.
+
+## OpenRouter
+
+Key: `OPENROUTER_API_KEY`, else `openrouter-key` in `~/.config/whytrail/config.json`. Model ids: the home file (`classify-model`, `embed-model`), else `.whytrail/config.json` (`classify_model`, `embed_model`), else `openai/gpt-4o-mini` and `openai/text-embedding-3-small`. Chat completions use a JSON schema; embeddings use `/embeddings`. No SDK. Confidence below 0.8 is not kept: the plan stays `unclassified`.
+
+## `.whytrail/cards.jsonl`
+
+One card per plan blob. A plan whose blob hash is unchanged is not sent to the classifier again. Fields: `blob`, `plan`, `born` (`bug|perf|feature|change|taste`), `builds_on`, `files`, `outcome`, `confidence`, `source` (`field` | `llm` | `unclassified`), and `goal` (the first Goal line, stored so labels do not re-read the plan). Plans that already have `Born from:` or `Builds on:` lines are read as-is (`source: field`, confidence 1). In a lineage, newer cards weigh more: `0.5^(age_days/30)`.
+
+`whytrail review --sample 30` prints 30 random `llm` cards for hand-checking.
 
 ## Development
 

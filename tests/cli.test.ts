@@ -22,6 +22,8 @@ describe("cli basics", () => {
     expect(res.code).toBe(0);
     expect(res.stdout).toContain("whytrail why");
     expect(res.stdout).toContain("whytrail code");
+    expect(res.stdout).toContain("whytrail config");
+    expect(res.stdout).toContain("whytrail labels");
   });
 
   test("no args and unknown commands exit 1 with usage on stderr", () => {

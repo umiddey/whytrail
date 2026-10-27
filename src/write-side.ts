@@ -5,7 +5,7 @@ import { gitOut, git } from "./git";
 import type { RepoCtx } from "./git";
 import type { PlanFile } from "./plans";
 
-export type LinkSource = "trailer" | "co-commit" | "memory-log" | "progress-sha" | "branch" | "date-files" | "review";
+export type LinkSource = "trailer" | "co-commit" | "memory-log" | "progress-sha" | "branch" | "date-files" | "cited-path" | "semantic" | "review";
 export type LinkDecision = "accept" | "reject";
 export type Link = { commit: string; plan: string; source: LinkSource; confidence: "high" | "medium" | "low" | "review"; decision?: LinkDecision };
 function linkFile(root: string): string { return join(root, ".whytrail", "links.jsonl"); }
@@ -52,7 +52,7 @@ function planDate(plan:PlanFile):number|null{if(!plan.date)return null;const val
 function commitPaths(cwd:string,sha:string):string[]{return gitOut(["diff-tree","--root","--no-commit-id","--name-only","-r",sha],cwd).split(/\r?\n/).filter(Boolean);}
 function commitInfo(cwd:string,sha:string):{date:string;subject:string;trailers:string[]}{const fields=gitOut(["show","-s","--format=%aI%x1f%s%x1f%(trailers:key=Plan,valueonly)",sha],cwd).trimEnd().split("\x1f");return {date:fields[0]??"",subject:fields[1]??"",trailers:(fields[2]??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean)};}
 function citedPaths(text:string):string[]{const found:string[]=[];let active=false;for(const line of text.split(/\r?\n/)){if(/^#{1,6}\s*(FILES MODIFIED|Files changed|Files)\s*$/i.test(line.trim())){active=true;continue;}if(active&&/^#{1,6}\s/.test(line))break;if(active){for(const m of line.matchAll(/(?:^|[\s`])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?/g))found[found.length]=m[1];}}return [...new Set(found)];}
-function planCodePaths(text:string):string[]{const found:string[]=[];for(const line of text.split(/\r?\n/)){for(const m of line.matchAll(/(?:^|[\s`])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?/g)){const p=m[1];if(!p.endsWith(".md"))found[found.length]=p;}}return [...new Set(found)];}
+export function planCodePaths(text:string):string[]{const found:string[]=[];for(const line of text.split(/\r?\n/)){for(const m of line.matchAll(/(?:^|[\s`])((?:[\w.-]+\/)*[\w.-]+\.[A-Za-z0-9]+)(?::\d+(?:-\d+)?)?/g)){const p=m[1];if(!p.endsWith(".md"))found[found.length]=p;}}return [...new Set(found)];}
 /** Read-only: compute the links a backfill would add, without writing anything. Used by backfill and by the P3 real-repo hand-check. */
 export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolean;since?:string}):{added:Link[];old:Link[]}{
  const root=mainRoot(ctx.cwd),old=readLinks(root),protectedLinks=old.filter(x=>x.source==="review"),existing=new Set(old.map(x=>`${x.commit}\0${x.plan}`)),shas=gitOut(["rev-list","--reverse","--all"],ctx.cwd).split(/\r?\n/).filter(Boolean),added:Link[]=[],texts:Record<string,string>={};
@@ -76,14 +76,21 @@ export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolea
  }
  const since=opts.since?Date.parse(opts.since):Number.NEGATIVE_INFINITY;
  for(const sha of shas){const meta=commitInfo(ctx.cwd,sha);if(Date.parse(meta.date)<since)continue;const files=commitPaths(ctx.cwd,sha),timestamp=Date.parse(meta.date),hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
-  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence="high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f))){source="date-files";confidence="low";}}
+  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited){source="cited-path";confidence="medium";}}
   if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence};
  }}
  return {added,old};
 }
 export function backfill(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolean;since?:string}):string{
  const root=mainRoot(ctx.cwd),{added,old}=backfillPreview(ctx,plans,opts);
- const totals:Record<string,number>={};for(const l of [...old,...added]){const key=`${l.source} ${l.confidence}`;totals[key]=(totals[key]??0)+1;}const summary=[`new links: ${added.length}`,...Object.keys(totals).sort().map(k=>`${k}: ${totals[k]}`)];if(!opts.dryRun&&added.length){const path=linkFile(root);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,[...old,...added].map(l=>JSON.stringify(l)).join("\n")+"\n");}return summary.join("\n")+"\n";
+ const windows=windowsFor(ctx,plans,[...old,...added]);
+ const totals:Record<string,number>={};for(const l of [...old,...added]){const key=`${l.source} ${l.confidence}`;totals[key]=(totals[key]??0)+1;}
+ const summary=[`new links: ${added.length}`,...Object.keys(totals).sort().map(k=>`${k}: ${totals[k]}`),formatWindows(windows)];
+ if(!opts.dryRun){
+  if(added.length){const path=linkFile(root);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,[...old,...added].map(l=>JSON.stringify(l)).join("\n")+"\n");}
+  writeWindows(root,windows);
+ }
+ return summary.join("\n")+"\n";
 }
 export function review(ctx:RepoCtx,_plans:PlanFile[],decision?:{accept:boolean;sha:string;plan:string}):string{
  const root=mainRoot(ctx.cwd),old=readLinks(root);
@@ -96,3 +103,173 @@ export function review(ctx:RepoCtx,_plans:PlanFile[],decision?:{accept:boolean;s
  return old.filter(l=>l.source!=="review"&&(l.confidence==="low"||old.some(x=>x.source!=="review"&&x.commit===l.commit&&x.plan!==l.plan))).map(l=>JSON.stringify(l)).join("\n")+"\n";
 }
 export function links(ctx:RepoCtx):Link[]{return readLinks(mainRoot(ctx.cwd)).filter(l=>l.source!=="review"||l.decision==="accept");}
+
+const DAY_MS = 86_400_000;
+export const SEMANTIC_FLOOR = 0.5;
+
+export type Windows = {
+  plan_before_code_days: number | null;
+  plan_after_code_days: number | null;
+  before_n: number;
+  after_n: number;
+};
+
+export function percentile95(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil(0.95 * sorted.length);
+  return sorted[Math.min(sorted.length, Math.max(1, rank)) - 1];
+}
+
+export function measureWindows(rows: { planMs: number; codeMs: number }[]): Windows {
+  const before: number[] = [];
+  const after: number[] = [];
+  for (const row of rows) {
+    const days = (row.codeMs - row.planMs) / DAY_MS;
+    if (days >= 0) before.push(days);
+    else after.push(-days);
+  }
+  return {
+    plan_before_code_days: percentile95(before),
+    plan_after_code_days: percentile95(after),
+    before_n: before.length,
+    after_n: after.length,
+  };
+}
+
+export function formatWindows(w: Windows): string {
+  const before = w.plan_before_code_days === null ? "none" : `${w.plan_before_code_days}d`;
+  const after = w.plan_after_code_days === null ? "none" : `${w.plan_after_code_days}d`;
+  return `windows: plan-before-code 95th ${before} (n=${w.before_n}), plan-after-code 95th ${after} (n=${w.after_n})`;
+}
+
+function authorDates(cwd: string): Record<string, number> {
+  const log = git(["log", "--all", "--format=%H%x09%aI"], cwd);
+  const out: Record<string, number> = {};
+  if (log.code !== 0) return out;
+  for (const line of log.stdout.split(/\r?\n/)) {
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const ms = Date.parse(line.slice(tab + 1));
+    if (Number.isFinite(ms)) out[line.slice(0, tab)] = ms;
+  }
+  return out;
+}
+
+function windowsFor(ctx: RepoCtx, plans: PlanFile[], rows: Link[]): Windows {
+  const dates = authorDates(ctx.cwd);
+  const samples: { planMs: number; codeMs: number }[] = [];
+  for (const link of rows) {
+    if (link.confidence !== "high") continue;
+    const plan = plans.find((item) => item.id === link.plan);
+    const planMs = plan ? planDate(plan) : null;
+    const codeMs = dates[link.commit];
+    if (planMs === null || codeMs === undefined) continue;
+    samples.push({ planMs, codeMs });
+  }
+  return measureWindows(samples);
+}
+
+function writeWindows(root: string, windows: Windows): void {
+  const path = join(root, ".whytrail", "windows.json");
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(windows, null, 2) + "\n");
+}
+
+export function cosine(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / Math.sqrt(na * nb);
+}
+
+export function semanticLinks(opts: {
+  commits: { sha: string; ms: number; text: string }[];
+  plans: { id: string; ms: number; text: string }[];
+  linkedCommits: Set<string>;
+  blockedPairs: Set<string>;
+  windows: Windows;
+  embed: (text: string) => number[];
+}): Link[] {
+  const planVec: Record<string, number[]> = {};
+  const out: Link[] = [];
+  for (const commit of opts.commits) {
+    if (opts.linkedCommits.has(commit.sha)) continue;
+    let best: { id: string; score: number } | null = null;
+    let commitVec: number[] | null = null;
+    for (const plan of opts.plans) {
+      if (opts.blockedPairs.has(`${commit.sha}\0${plan.id}`)) continue;
+      const days = (commit.ms - plan.ms) / DAY_MS;
+      const inside = days >= 0
+        ? opts.windows.plan_before_code_days !== null && days <= opts.windows.plan_before_code_days
+        : opts.windows.plan_after_code_days !== null && -days <= opts.windows.plan_after_code_days;
+      if (!inside) continue;
+      if (!commitVec) commitVec = opts.embed(commit.text);
+      const vec = planVec[plan.id] ?? (planVec[plan.id] = opts.embed(plan.text));
+      const score = cosine(commitVec, vec);
+      if (!best || score > best.score) best = { id: plan.id, score };
+    }
+    if (best && best.score >= SEMANTIC_FLOOR) {
+      out.push({ commit: commit.sha, plan: best.id, source: "semantic", confidence: best.score >= 0.8 ? "medium" : "low" });
+    }
+  }
+  return out;
+}
+
+export async function applySemantic(ctx: RepoCtx, plans: PlanFile[], opts: { dryRun: boolean; since?: string; embed: (texts: string[]) => Promise<number[][]> }): Promise<string> {
+  const root = mainRoot(ctx.cwd);
+  const { added, old } = backfillPreview(ctx, plans, opts);
+  const combined = [...old, ...added];
+  const windows = windowsFor(ctx, plans, combined);
+  const dates = authorDates(ctx.cwd);
+  const since = opts.since ? Date.parse(opts.since) : Number.NEGATIVE_INFINITY;
+  const linked = new Set(combined.filter((link) => !(link.source === "review" && link.decision === "reject")).map((link) => link.commit));
+  const blocked = new Set(combined.map((link) => `${link.commit}\0${link.plan}`));
+  const commits: { sha: string; ms: number; text: string }[] = [];
+  for (const sha of gitOut(["rev-list", "--reverse", "--all"], ctx.cwd).split(/\r?\n/).filter(Boolean)) {
+    if (linked.has(sha)) continue;
+    const ms = dates[sha];
+    if (ms === undefined || ms < since) continue;
+    const subject = gitOut(["show", "-s", "--format=%s", sha], ctx.cwd).trim();
+    const names = gitOut(["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", sha], ctx.cwd).trim();
+    commits.push({ sha, ms, text: `${subject}\n${names}`.slice(0, 4000) });
+  }
+  const planInputs: { id: string; ms: number; text: string }[] = [];
+  for (const plan of plans) {
+    const ms = planDate(plan);
+    if (ms === null) continue;
+    let text = "";
+    try { text = readFileSync(plan.absPath, "utf8"); } catch { continue; }
+    planInputs.push({ id: plan.id, ms, text: text.slice(0, 4000) });
+  }
+  const texts: string[] = [];
+  const seen: Record<string, true> = {};
+  for (const row of [...commits, ...planInputs]) {
+    if (seen[row.text]) continue;
+    seen[row.text] = true;
+    texts.push(row.text);
+  }
+  const vectors = texts.length ? await opts.embed(texts) : [];
+  const byText: Record<string, number[]> = {};
+  for (let i = 0; i < texts.length; i++) byText[texts[i]] = vectors[i] ?? [];
+  const semantic = semanticLinks({
+    commits,
+    plans: planInputs,
+    linkedCommits: linked,
+    blockedPairs: blocked,
+    windows,
+    embed: (text) => byText[text] ?? [],
+  });
+  if (!opts.dryRun && semantic.length) {
+    const path = linkFile(root);
+    const stored = readLinks(root);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, [...stored, ...semantic].map((link) => JSON.stringify(link)).join("\n") + "\n");
+  }
+  return semantic.length ? `semantic links: ${semantic.length}\n` : "";
+}

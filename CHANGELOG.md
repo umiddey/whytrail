@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `whytrail labels` — story labels (`bad` / `good` / `open`) from plan lineage, cached in `.whytrail/cards.jsonl` by git blob hash. OpenRouter classifies plans that have no `Born from` / `Builds on` lines; no key leaves them `unclassified`. (P3b)
+- `whytrail config set|get|list|unset` — OpenRouter key and model ids in `~/.config/whytrail/config.json` (mode 0600). The key is masked on output; `OPENROUTER_API_KEY` wins. (P3b)
+- Backfill sources `cited-path` and `semantic`, measured date windows in `.whytrail/windows.json`, and low confidence for co-commit links from commits that touch more than 100 files. (P3b)
+
 ## 0.1.1 - 2026-10-27
 
 ### Changed
