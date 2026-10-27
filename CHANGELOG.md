@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-10-27
+
+### Changed
+
+- Releases publish from GitHub Actions on every push to main with a new version, through npm trusted publishing (provenance attached); no token.
+
 ## 0.1.0 - 2026-10-26
 
 First release: link plan files and code both ways, in time order.
