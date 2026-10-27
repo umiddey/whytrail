@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.2 (2026-10-27)
+
 ### Fixed
 
 - `memory-log` counts only when the commit date is inside the same measured window `cited-path` uses, measured in that backfill run. (P3f)
