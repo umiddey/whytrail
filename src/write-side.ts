@@ -75,12 +75,15 @@ export function backfillPreview(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolea
   }
  }
  const storedWindows=readStoredWindows(root);
- const citedDays={beforeDays:storedWindows?.plan_before_code_days??FALLBACK_BEFORE_DAYS,afterDays:storedWindows?.plan_after_code_days??FALLBACK_AFTER_DAYS};
  const since=opts.since?Date.parse(opts.since):Number.NEGATIVE_INFINITY;
+ const citedCandidates:{sha:string;plan:PlanFile;timestamp:number;text:string}[]=[];
  for(const sha of shas){const meta=commitInfo(ctx.cwd,sha);if(Date.parse(meta.date)<since)continue;const files=commitPaths(ctx.cwd,sha),timestamp=Date.parse(meta.date),hasCode=files.some(f=>!f.endsWith(".md"));for(const plan of plans){if(existing.has(`${sha}\0${plan.id}`)||protectedLinks.some(l=>l.commit===sha&&l.plan===plan.id))continue;const text=texts[plan.id]??"";let source:LinkSource|undefined;let confidence:Link["confidence"]|undefined;
-  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited&&citedPathInWindow(timestamp,plan,text,citedDays)){source="cited-path";confidence="medium";}}
+  if(meta.trailers.includes(plan.id)){source="trailer";confidence="high";}else if(files.includes(plan.path)&&files.length>1){source="co-commit";confidence=files.length>100?"low":"high";}else if(planDate(plan)!==null&&timestamp>=(planDate(plan) as number)&&files.some(f=>(memoryPaths[plan.id]??[]).includes(f))){source="memory-log";confidence="medium";}else if(new RegExp(`\\b${sha.slice(0,7)}[0-9a-f]{0,33}\\b`,"i").test(text)){source="progress-sha";confidence="high";}else if(branchLinks[plan.id]?.has(sha)){source="branch";confidence="high";}else{const date=plan.date?.slice(0,10);const cited=files.some(f=>!f.endsWith(".md")&&planCodePaths(text).includes(f));if(date&&new Date(timestamp).toISOString().slice(0,10)===date&&hasCode&&cited){source="date-files";confidence="low";}else if(cited)citedCandidates[citedCandidates.length]={sha,plan,timestamp,text};}
   if(source&&confidence)added[added.length]={commit:sha,plan:plan.id,source,confidence};
  }}
+ const measured=windowsFor(ctx,plans,[...old,...added]);
+ const citedDays={beforeDays:measured.plan_before_code_days??storedWindows?.plan_before_code_days??FALLBACK_BEFORE_DAYS,afterDays:measured.plan_after_code_days??storedWindows?.plan_after_code_days??FALLBACK_AFTER_DAYS};
+ for(const row of citedCandidates){if(citedPathInWindow(row.timestamp,row.plan,row.text,citedDays))added[added.length]={commit:row.sha,plan:row.plan.id,source:"cited-path",confidence:"medium"};}
  return {added,old};
 }
 export function backfill(ctx:RepoCtx,plans:PlanFile[],opts:{dryRun:boolean;since?:string}):string{

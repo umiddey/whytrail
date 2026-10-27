@@ -110,7 +110,7 @@ Sources, in the order backfill tries them (first match wins):
 
 A commit touching more than 100 files (a bulk snapshot) still gets `co-commit` links, but at low confidence.
 
-`whytrail backfill` measures date windows from the high-confidence links: the 95th percentile (nearest rank, `ceil(0.95 * n)`) of code-date minus plan-date when the plan is first, and of plan-date minus code-date when the plan is later. It writes `.whytrail/windows.json` and prints the percentiles. Semantic linking does not guess a window when there are no high-confidence samples. `cited-path` reads the stored windows; a side that is missing or not yet measured falls back to 3 days before the plan date and 1 day after the last Progress date.
+`whytrail backfill` measures date windows from the high-confidence links: the 95th percentile (nearest rank, `ceil(0.95 * n)`) of code-date minus plan-date when the plan is first, and of plan-date minus code-date when the plan is later. It prints the percentiles. A real run writes `.whytrail/windows.json`; `--dry-run` does not. Semantic linking does not guess a window when there are no high-confidence samples. `cited-path` uses the windows measured in that same run, dry-run included. A side that this run did not measure falls back to `.whytrail/windows.json`, then to 3 days before the plan date and 1 day after the last Progress date.
 
 ## OpenRouter
 

@@ -5,6 +5,7 @@
 ### Fixed
 
 - `cited-path` counts only when the commit date is inside the measured window from `.whytrail/windows.json` (fallback when not measured: 3 days before the plan date, 1 day after the last Progress date, or the plan date when Progress has none). (P3c)
+- `cited-path` uses the windows measured from high-confidence links in the same backfill run, including `--dry-run`, instead of the 3-day/1-day fallback. A real run still writes `.whytrail/windows.json`. (P3d)
 
 ## 0.2.0 (2026-10-27)
 

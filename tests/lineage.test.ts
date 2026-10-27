@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { makeTempRepo, removeRepo, type TempRepo } from "./helpers/repo";
 import { repoContext } from "../src/git";
 import { planFromFile } from "../src/plans";
-import { backfill, links, measureWindows, semanticLinks, applySemantic } from "../src/write-side";
+import { backfill, backfillPreview, links, measureWindows, semanticLinks, applySemantic } from "../src/write-side";
 import { openRouter, OPENROUTER_ORIGIN } from "../src/openrouter";
 
 const repos: TempRepo[] = [];
@@ -139,6 +139,36 @@ describe("lineage links", () => {
     expect(cited).toEqual([edge, end]);
     expect(cited).not.toContain(early);
     expect(cited).not.toContain(past);
+  });
+
+  test("cited-path uses the window measured in the same run when windows.json is absent", () => {
+    const repo = makeTempRepo();
+    repos.push(repo);
+    const planPath = "docs/plans/20260110_0900_same.md";
+    repo.write("src/early.ts", "early\n");
+    const earlySha = repo.commit(["src/early.ts"], "early code", { date: "2026-01-09T21:00:00Z" });
+    const text = `# Same run\n\n## Goal\nTouch src/late.ts\n\nEarly ${earlySha}\n`;
+    repo.write(planPath, text);
+    repo.write("src/anchor.ts", "anchor\n");
+    repo.commit([planPath, "src/anchor.ts"], "plan and anchor", { date: "2026-01-11T03:00:00Z" });
+    repo.write("src/late.ts", "too early\n");
+    const tooEarly = repo.commit(["src/late.ts"], "inside fallback before", { date: "2026-01-08T09:00:00Z" });
+    repo.write("src/late.ts", "after edge\n");
+    const insideAfter = repo.commit(["src/late.ts"], "inside measured after", { date: "2026-01-09T21:00:00Z" });
+    repo.write("src/late.ts", "before edge\n");
+    const insideBefore = repo.commit(["src/late.ts"], "inside measured before", { date: "2026-01-11T00:00:00Z" });
+    repo.write("src/late.ts", "too late\n");
+    const tooLate = repo.commit(["src/late.ts"], "inside fallback after", { date: "2026-01-11T09:00:00Z" });
+    const ctx = repoContext(repo.root);
+    const plans = [planFromFile(repo.root, planPath, text)];
+    expect(existsSync(join(repo.root, ".whytrail", "windows.json"))).toBe(false);
+    const preview = backfill(ctx, plans, { dryRun: true });
+    expect(existsSync(join(repo.root, ".whytrail", "windows.json"))).toBe(false);
+    expect(preview).toContain("windows: plan-before-code 95th 0.75d (n=1), plan-after-code 95th 0.5d (n=1)");
+    const cited = backfillPreview(ctx, plans, { dryRun: true }).added.filter((link) => link.source === "cited-path").map((link) => link.commit);
+    expect(cited).toEqual([insideAfter, insideBefore]);
+    expect(cited).not.toContain(tooEarly);
+    expect(cited).not.toContain(tooLate);
   });
 
   test("semantic links a leftover inside the measured window and skips one outside it", async () => {
