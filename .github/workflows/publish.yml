@@ -1,43 +1,60 @@
-# Publishes whytrail to the public npm registry on a v* tag via npm trusted
-# publishing. The workflow's short-lived OIDC token authenticates the push.
-# No NPM_TOKEN and no NODE_AUTH_TOKEN secret exists or is used.
+# Publishes whytrail to npm on every push to main whose package.json version
+# is not on npm yet: bump the version, `git push`, done. Pushes that keep the
+# version publish nothing. After publishing it tags the commit v<version>.
 #
-# One-time bootstrap: npm only lets a package get a trusted publisher once the
-# package exists. Publish 0.1.0 once by hand (owner `npm login`, then
-# `npm publish --access public` from the verified tarball). Then the owner
-# registers this workflow as a Trusted Publisher on npmjs.com: package
-# whytrail → Settings → Trusted Publisher → <owner>/whytrail, workflow
-# publish.yml. Every later v* tag publishes from Actions.
+# Auth: npm trusted publishing (OIDC) when it is set up for this repo, else the
+# NPM_TOKEN repository secret. npm only allows a trusted publisher once the
+# package exists, so the first release needs NPM_TOKEN (npmjs.com → Access
+# Tokens → granular, read+write on whytrail); after that the secret may be
+# replaced by package whytrail → Settings → Trusted Publisher → umiddey/whytrail,
+# workflow publish.yml.
 name: publish
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 permissions:
-  contents: read
+  contents: write
   id-token: write
+concurrency: publish
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.14
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           registry-url: 'https://registry.npmjs.org/'
-      # Trusted publishing (OIDC-authenticated PUT) requires npm >= 11.5.
-      - run: npm install -g npm@11.6.2
-      # No lockfile is committed yet; switch to `bun install --frozen-lockfile`
-      # when one lands.
-      - run: bun install
-      - run: bun test
-      - name: tag must equal v plus package.json version
+      - name: is this version new on npm?
+        id: ver
         run: |
           ver="$(node -p "require('./package.json').version")"
-          echo "tag=$GITHUB_REF_NAME version=v$ver"
-          test "$GITHUB_REF_NAME" = "v$ver"
-      # whytrail's repo is public, so npm accepts the provenance bundle
-      # (private repos get E422 and must omit --provenance).
-      - run: npm publish --access public --provenance
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if npm view "whytrail@$ver" version >/dev/null 2>&1; then
+            echo "whytrail@$ver is already on npm; nothing to publish"
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.ver.outputs.new == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      # Trusted publishing (OIDC-authenticated PUT) requires npm >= 11.5.
+      - if: steps.ver.outputs.new == 'true'
+        run: npm install -g npm@11.6.2
+      # No lockfile is committed yet; switch to `bun install --frozen-lockfile`
+      # when one lands.
+      - if: steps.ver.outputs.new == 'true'
+        run: bun install
+      - if: steps.ver.outputs.new == 'true'
+        run: bun test
+      # whytrail's repo is public, so npm accepts the provenance bundle.
+      - if: steps.ver.outputs.new == 'true'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - if: steps.ver.outputs.new == 'true'
+        run: |
+          git tag "v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"
