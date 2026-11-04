@@ -12,7 +12,7 @@ function linkFile(root: string): string { return join(root, ".whytrail", "links.
 function mainRoot(cwd: string): string { const common=gitOut(["rev-parse","--path-format=absolute","--git-common-dir"],cwd).trim();return common.replace(/\/\.git$/,"").replace(/\/$/,""); }
 function readLinks(root: string): Link[] { const path=linkFile(root);if(!existsSync(path))return [];return readFileSync(path,"utf8").split(/\r?\n/).filter(Boolean).map(x=>JSON.parse(x) as Link); }
 const CLI_PATH = fileURLToPath(new URL("./cli.ts", import.meta.url));
-function hooksDir(cwd: string): string { const configured=git(["config","--path","core.hooksPath"],cwd);if(configured.code===0&&configured.stdout.trim())return resolve(cwd,configured.stdout.trim());return resolve(cwd,gitOut(["rev-parse","--git-path","hooks"],cwd).trim()); }
+export function hooksDir(cwd: string): string { const configured=git(["config","--path","core.hooksPath"],cwd);if(configured.code===0&&configured.stdout.trim())return resolve(cwd,configured.stdout.trim());return resolve(cwd,gitOut(["rev-parse","--git-path","hooks"],cwd).trim()); }
 const PREPARE = `#!/usr/bin/env bun
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";

@@ -2,6 +2,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { repoContext } from "./git";
+import { planGlobs, skipList, writeRepoPlansSkips } from "./plans";
 
 export const CONFIG_NAMES = ["openrouter-key", "classify-model", "embed-model"] as const;
 export type ConfigName = (typeof CONFIG_NAMES)[number];
@@ -82,7 +84,7 @@ export function resolveModels(
   };
 }
 
-function readHidden(prompt: string): string {
+export function readHidden(prompt: string): string {
   process.stderr.write(prompt);
   if (process.stdin.isTTY) {
     const proc = Bun.spawnSync(["bash", "-c", "IFS= read -rs line; printf '%s' \"$line\""], {
@@ -106,12 +108,64 @@ function readHidden(prompt: string): string {
   return line.replace(/\r$/, "");
 }
 
+/** Plain (echoing) line prompt: the visible counterpart of readHidden. */
+export function readLine(prompt: string): string {
+  process.stderr.write(prompt);
+  if (process.stdin.isTTY) {
+    const proc = Bun.spawnSync(["bash", "-c", "IFS= read -r line; printf '%s' \"$line\""], {
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    process.stderr.write("\n");
+    if ((proc.exitCode ?? 1) !== 0) throw new Error("could not read input");
+    return proc.stdout.toString();
+  }
+  let line = "";
+  const buf = Buffer.alloc(1);
+  while (true) {
+    const n = readSync(0, buf, 0, 1, null);
+    if (n === 0) break;
+    const ch = buf.toString("utf8", 0, n);
+    if (ch === "\n") break;
+    line += ch;
+  }
+  return line.replace(/\r$/, "");
+}
+
 function fail(message: string): number {
   process.stderr.write(`error: ${message}\n`);
   return 1;
 }
 
-export function runConfig(argv: string[], home: string = homedir(), env: NodeJS.ProcessEnv = process.env): number {
+const REPO_NAMES = ["plans", "skip"] as const;
+type RepoName = (typeof REPO_NAMES)[number];
+
+function isRepoName(name: string): name is RepoName {
+  return (REPO_NAMES as readonly string[]).includes(name);
+}
+
+/** main checkout for repo-level names, or null when cwd/--repo is not a git repository */
+function repoMainRoot(repoPath: string | undefined): string | null {
+  try {
+    return repoContext(repoPath).mainRoot;
+  } catch {
+    return null;
+  }
+}
+
+function repoRootOrThrow(repoPath: string | undefined, name: string): string {
+  const root = repoMainRoot(repoPath);
+  if (!root) throw new Error(`config ${name} is repo-level: run inside a repository or pass --repo <path>`);
+  return root;
+}
+
+export function runConfig(
+  argv: string[],
+  home: string = homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  repoPath?: string,
+): number {
   const sub = argv[0];
   if (sub !== "set" && sub !== "get" && sub !== "list" && sub !== "unset") {
     return fail("usage: whytrail config set|get|list|unset");
@@ -125,11 +179,41 @@ export function runConfig(argv: string[], home: string = homedir(), env: NodeJS.
         if (!value) continue;
         lines.push(`${name}=${displayValue(name, value)}`);
       }
+      const root = repoMainRoot(repoPath);
+      if (root) {
+        lines.push(`plans=${planGlobs(root).join(",")}`);
+        lines.push(`skip=${skipList(root).join(",")}`);
+      }
       process.stdout.write(lines.length ? lines.join("\n") + "\n" : "");
       return 0;
     }
     const name = argv[1];
-    if (!name || !isConfigName(name)) return fail(`unknown config name: ${name ?? "(missing)"}`);
+    if (!name || (!isConfigName(name) && !isRepoName(name))) {
+      return fail(`unknown config name: ${name ?? "(missing)"} (known: ${[...CONFIG_NAMES, ...REPO_NAMES].join(", ")})`);
+    }
+    if (isRepoName(name)) {
+      if (sub === "get") {
+        const root = repoRootOrThrow(repoPath, name);
+        process.stdout.write(`${(name === "plans" ? planGlobs(root) : skipList(root)).join(",")}\n`);
+        return 0;
+      }
+      if (sub === "unset") {
+        const root = repoRootOrThrow(repoPath, name);
+        if (name === "plans") writeRepoPlansSkips(root, { plans: null });
+        else writeRepoPlansSkips(root, { skip: null });
+        process.stdout.write(`unset ${name}\n`);
+        return 0;
+      }
+      const raw = argv.slice(2).join(" ").trim();
+      if (!raw) return fail(`${name} needs a value`);
+      const entries = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      if (entries.length === 0) return fail(`${name} needs a value`);
+      const root = repoRootOrThrow(repoPath, name);
+      if (name === "plans") writeRepoPlansSkips(root, { plans: entries });
+      else writeRepoPlansSkips(root, { skip: entries });
+      process.stdout.write(`set ${name}\n`);
+      return 0;
+    }
     if (sub === "get") {
       const value = name === "openrouter-key" ? resolveKey(env, home) : readConfig(home)[name];
       if (!value) return fail(`${name} is not set`);

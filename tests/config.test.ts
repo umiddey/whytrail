@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { makeTempRepo, removeRepo, type TempRepo } from "./helpers/repo";
 
 const CLI = join(import.meta.dir, "..", "src", "cli.ts");
 const homes: string[] = [];
@@ -27,12 +28,13 @@ function envFor(home: string, extra: Record<string, string> = {}): Record<string
   return env;
 }
 
-function run(home: string, args: string[], extra: Record<string, string> = {}, stdin?: string) {
+function run(home: string, args: string[], extra: Record<string, string> = {}, stdin?: string, cwd?: string) {
   const proc = Bun.spawnSync(["bun", "run", CLI, ...args], {
     env: envFor(home, extra),
     stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin),
     stdout: "pipe",
     stderr: "pipe",
+    cwd,
   });
   return { code: proc.exitCode ?? 1, stdout: proc.stdout.toString(), stderr: proc.stderr.toString() };
 }
@@ -78,5 +80,87 @@ describe("whytrail config", () => {
     expect(`${got.stdout}${got.stderr}`).not.toContain(envKey);
     expect(got.stdout).not.toContain("file");
     expect(JSON.parse(readFileSync(path, "utf8"))["openrouter-key"]).toBe(fileKey);
+  });
+});
+
+describe("whytrail config repo-level plans and skip", () => {
+  let repos: TempRepo[] = [];
+  afterEach(() => {
+    for (const r of repos) removeRepo(r);
+    repos = [];
+  });
+
+  function repo(): TempRepo {
+    const r = makeTempRepo();
+    repos[repos.length] = r;
+    return r;
+  }
+
+  test("set then get round-trips comma lists for plans and skip; list shows them", () => {
+    const home = homeDir();
+    const t = repo();
+    const setPlans = run(home, ["config", "set", "plans", "notes/**/*.md, docs/plans/**/*.md"], {}, undefined, t.root);
+    expect(setPlans.code).toBe(0);
+    expect(setPlans.stdout).toBe("set plans\n");
+    const getPlans = run(home, ["config", "get", "plans"], {}, undefined, t.root);
+    expect(getPlans.stdout).toBe("notes/**/*.md,docs/plans/**/*.md\n");
+    const setSkip = run(home, ["config", "set", "skip", "drafts/, NOTES.md"], {}, undefined, t.root);
+    expect(setSkip.code).toBe(0);
+    const getSkip = run(home, ["config", "get", "skip"], {}, undefined, t.root);
+    expect(getSkip.stdout).toBe("drafts/,NOTES.md\n");
+    const listed = run(home, ["config", "list"], {}, undefined, t.root);
+    expect(listed.code).toBe(0);
+    expect(listed.stdout).toContain("plans=notes/**/*.md,docs/plans/**/*.md");
+    expect(listed.stdout).toContain("skip=drafts/,NOTES.md");
+    const written = JSON.parse(readFileSync(join(t.root, ".whytrail.json"), "utf8"));
+    expect(written.plans).toEqual(["notes/**/*.md", "docs/plans/**/*.md"]);
+    expect(written.skip).toEqual(["drafts/", "NOTES.md"]);
+  });
+
+  test("setting a value equal to the default clears the key; a matching file is not rewritten", () => {
+    const home = homeDir();
+    const t = repo();
+    t.write(".whytrail.json", `${JSON.stringify({ skip: ["CANCELLED.md", "INDEX.md", "assets/", "blockers/"] })}\n`);
+    t.commit([".whytrail.json"], "cfg");
+    const path = join(t.root, ".whytrail.json");
+    const contentBefore = readFileSync(path, "utf8");
+    const mtimeBefore = statSync(path).mtimeNs;
+    const same = run(home, ["config", "set", "skip", "blockers/,assets/,INDEX.md,CANCELLED.md"], {}, undefined, t.root);
+    expect(same.code).toBe(0);
+    expect(statSync(path).mtimeNs).toBe(mtimeBefore);
+    expect(readFileSync(path, "utf8")).toBe(contentBefore);
+    const getAfter = run(home, ["config", "get", "skip"], {}, undefined, t.root);
+    expect(getAfter.stdout).toBe("CANCELLED.md,INDEX.md,assets/,blockers/\n");
+  });
+
+  test("unset removes a repo key and defaults apply again", () => {
+    const home = homeDir();
+    const t = repo();
+    const set = run(home, ["config", "set", "plans", "notes/**/*.md"], {}, undefined, t.root);
+    expect(set.code).toBe(0);
+    const unset = run(home, ["config", "unset", "plans"], {}, undefined, t.root);
+    expect(unset.code).toBe(0);
+    expect(unset.stdout).toBe("unset plans\n");
+    expect(readFileSync(join(t.root, ".whytrail.json"), "utf8")).not.toContain("plans");
+    const get = run(home, ["config", "get", "plans"], {}, undefined, t.root);
+    expect(get.stdout).toBe("docs/plans/**/*.md\n");
+  });
+
+  test("repo names outside a repository fail with the repo-level message", () => {
+    const home = homeDir();
+    const r = run(home, ["config", "get", "plans"], {}, undefined, home);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("repo-level");
+  });
+
+  test("unknown name exits 1 listing all five names", () => {
+    const home = homeDir();
+    const t = repo();
+    const unknown = run(home, ["config", "set", "nope", "x"], {}, undefined, t.root);
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain("unknown config name");
+    for (const known of ["openrouter-key", "classify-model", "embed-model", "plans", "skip"]) {
+      expect(unknown.stderr).toContain(known);
+    }
   });
 });
