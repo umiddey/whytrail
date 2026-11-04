@@ -6,6 +6,7 @@ import { discoverPlans } from "./plans";
 import { whyResult, whyHuman, parseWhyTarget } from "./why";
 import { codeResult, codeHuman } from "./code";
 import { applySemantic, backfill, branchPlans, install, links, review, uninstall } from "./write-side";
+import { runSetup } from "./setup";
 import { NO_KEY_LINE, resolveKey, resolveModels, runConfig } from "./config";
 import { classifyPrompt, ensureCards, labelPlans, labelsHuman, sampleCards } from "./lineage";
 import type { ClassifyFn } from "./lineage";
@@ -19,6 +20,7 @@ usage:
   whytrail code <plan-id|path> [--json]
   whytrail install | uninstall
   whytrail backfill [--dry-run] [--since <date>] [--repo <path>]
+  whytrail setup [--yes] [--repo <path>]
   whytrail labels [--json]
   whytrail review [--sample <n>] [--accept|--reject <sha> <plan-id>]
   whytrail config set <name> [value]
@@ -44,13 +46,13 @@ async function run(argv: string[]): Promise<number> {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (argv[0] === "config") return runConfig(argv.slice(1));
   const cmd = argv[0];
   const repoAt = argv.indexOf("--repo");
   if (repoAt >= 0 && !argv[repoAt + 1]) {
     process.stderr.write("error: --repo needs a path\n");
     return 1;
   }
+  if (argv[0] === "config") return runConfig(argv.slice(1), undefined, undefined, repoAt >= 0 ? argv[repoAt + 1] : undefined);
   try {
     const ctx = repoContext(repoAt >= 0 ? argv[repoAt + 1] : undefined);
     const plans = discoverPlans(ctx);
@@ -58,6 +60,7 @@ async function run(argv: string[]): Promise<number> {
     if (cmd === "_plan-branches") { process.stdout.write(branchPlans(plans) + "\n"); return 0; }
     if (cmd === "install") { install(ctx); return 0; }
     if (cmd === "uninstall") { uninstall(ctx); return 0; }
+    if (cmd === "setup") return runSetup(ctx, plans, { yes: argv.includes("--yes") });
     if (cmd === "backfill") {
       const sinceAt = argv.indexOf("--since");
       if (sinceAt >= 0 && !argv[sinceAt + 1]) throw new Error("--since needs a date");
