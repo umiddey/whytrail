@@ -66,11 +66,33 @@ One label per plan, oldest first: `bad (bug|perf|taste) by <later plan>: "<its f
 
 ### `whytrail config`
 
-`set`, `get`, `list`, and `unset` for `openrouter-key`, `classify-model`, and `embed-model`. The file is `~/.config/whytrail/config.json`, mode 0600. `set openrouter-key` with no value asks with hidden input, so the key stays out of shell history. `get` and `list` show the key masked (`sk-or-…ab12`), never whole. `OPENROUTER_API_KEY` wins over the file. Unknown names exit 1.
+`set`, `get`, `list`, and `unset` for `openrouter-key`, `classify-model`, and `embed-model` in `~/.config/whytrail/config.json` (mode 0600), plus the repo-level `plans` and `skip` in the repo's `.whytrail.json` (comma lists; values equal to their defaults clear the key, so the file only ever holds non-defaults). The key is asked with hidden input when `set openrouter-key` gets no value, so it stays out of shell history. `get` and `list` show the key masked (`sk-or-…ab12`), never whole. `OPENROUTER_API_KEY` wins over the file. Unknown names exit 1 listing all five.
 
 ## Plan discovery
 
-Plans are found in the repo's **main checkout** (resolved via `git rev-parse --git-common-dir`, so every command works from any worktree). Globs come from `.whytrail.json`'s `"plans"` array, default `docs/plans/**/*.md`. Files named `INDEX.md` or `CANCELLED.md` and anything under `blockers/` or `assets/` are skipped. A plan's id is its file basename without `.md` (e.g. `20261025_1440_whytrail_v1`), so links survive moving a plan into `docs/plans/archive/`. Title is the first `# ` heading; the date comes from the `YYYYMMDD_HHMM` stamp in the file name.
+Plans are found in the repo's **main checkout** (resolved via `git rev-parse --git-common-dir`, so every command works from any worktree). Globs come from `.whytrail.json`'s `"plans"` array, default `docs/plans/**/*.md`. The skip list comes from its `"skip"` array: entries ending in `/` are directory names skipped at any depth, the rest are file names — default `["INDEX.md", "CANCELLED.md", "blockers/", "assets/"]`, so by default files named `INDEX.md` or `CANCELLED.md` and anything under `blockers/` or `assets/` are skipped. A plan's id is its file basename without `.md` (e.g. `20261025_1440_whytrail_v1`), so links survive moving a plan into `docs/plans/archive/`. Title is the first `# ` heading; the date comes from the `YYYYMMDD_HHMM` stamp in the file name.
+
+## Setup
+
+`whytrail setup [--repo <path>] [--yes]` finds where a repo keeps its plans and asks only what it cannot guess. On this repo it looks like:
+
+```
+$ whytrail setup
+plans: docs/plans/**/*.md
+skips: CANCELLED.md, INDEX.md, assets/, blockers/
+config: unchanged
+key: sk-or-…ab12
+models: classify=openai/gpt-4o-mini embed=openai/text-embedding-3-small
+hooks: installed
+backfill: 4 new links (co-commit high: 1, trailer high: 3)
+write links? [y/N]: y
+backfill: wrote 4 links
+why: src/plans.ts -> 20261028_2357_whytrail_setup
+```
+
+- `plans` and `skips` come from the tracked `YYYYMMDD_HHMM`-stamped `.md` files: every folder whose path contains `plan` and holds at least three of them becomes a proposed `<root>/**/*.md` glob; first-level folders inside such a root that hold `.md` files but none stamped become proposed skips; `docs/memory/` is never proposed (it is the memory-log source, never a plan folder); stamped folders without a `plan` segment are shown as `other stamped` and never chosen by `--yes`. Enter accepts the proposal, or type a comma list to replace it.
+- `.whytrail.json` is written only when your choice differs from what the repo already has, and keys equal to their defaults are cleared — re-running setup on an unchanged repo reports `config: unchanged`, `hooks: unchanged`, `backfill: unchanged` and changes no file.
+- The OpenRouter key is asked with hidden input (blank keeps the current one) and stored masked in the HOME config via `writeConfig` (mode 0600); it is never printed whole. `--yes` takes every default, never prompts, and never touches the key.
 
 ## The `Plan:` trailer convention
 

@@ -90,6 +90,28 @@ describe("plan discovery", () => {
     ]);
   });
 
+  test('.whytrail.json "skip" replaces the default skip list', () => {
+    const t = repo();
+    t.write("docs/plans/20260101_0900_alpha.md", "# Alpha plan\n\n## Goal\nmake alpha\n");
+    t.write("docs/plans/drafts/20261001_1000_draft.md", "# Draft\n");
+    t.write("docs/plans/NOTES.md", "# Notes\n");
+    t.write("docs/plans/blockers/20260103_0900_blocked.md", "# Blocked\n");
+    t.write(".whytrail.json", JSON.stringify({ skip: ["drafts/", "NOTES.md"] }));
+    t.commit(["docs", ".whytrail.json"], "plans");
+    const plans = discoverPlans(repoContext(t.root));
+    // "skip" replaces the defaults, so blockers/ is no longer skipped here
+    expect(plans.map((p) => p.id)).toEqual(["20260101_0900_alpha", "20260103_0900_blocked"]);
+  });
+
+  test('.whytrail.json wrong "skip" type throws like "plans"', () => {
+    const t = repo();
+    t.write(".whytrail.json", JSON.stringify({ skip: "drafts/" }));
+    t.commit([".whytrail.json"], "plans");
+    expect(() => discoverPlans(repoContext(t.root))).toThrow(
+      '.whytrail.json: "skip" must be an array of strings',
+    );
+  });
+
   test("discovery works from a linked worktree (main checkout via git-common-dir)", () => {
     const t = repo();
     t.write("docs/plans/20260101_0900_alpha.md", "# Alpha\n");
