@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- `whytrail setup [--repo <path>] [--yes]` — detects plan folders from the tracked stamped files, asks for the OpenRouter key (hidden) and models, installs the hooks, previews then writes the backfill, and ends with a real `why` answer on the most-changed code file of the last 30 days. Re-running on an unchanged repo changes no file. (P3)
+- `whytrail config set|get|list|unset` now also reads and writes the repo-level `plans` and `skip` in `.whytrail.json` (comma lists, written only when they differ from the defaults). The three HOME names behave exactly as before. (P3b)
+- `.whytrail.json` accepts a `"skip"` array (entries ending in `/` are directory names skipped at any depth, the rest are file names; default `["INDEX.md", "CANCELLED.md", "blockers/", "assets/"]`). (P1)
+
 ## 0.2.2 (2026-10-27)
 
 ### Fixed
